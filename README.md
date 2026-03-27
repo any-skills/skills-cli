@@ -1,3 +1,5 @@
+![skills-cli 架构图](skills-cli-architecture.png)
+
 # skills-cli
 
 跨 AI Agent 的 Skills 统一管理工具，用 Go 实现，扩展本地 pull/push/watch 同步能力。
