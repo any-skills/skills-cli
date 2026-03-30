@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            artifact: linux-amd64
+          - goos: linux
+            goarch: arm64
+            artifact: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            artifact: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            artifact: darwin-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}-$(echo "$GITHUB_SHA" | cut -c1-7)"
+          OUT="skills-cli-${{ matrix.artifact }}"
+          go build -trimpath \
+            -ldflags="-s -w -X github.com/rushteam/skills-cli/cmd.Version=${VERSION}" \
+            -o "$OUT" .
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: skills-cli-${{ matrix.artifact }}
+          path: skills-cli-${{ matrix.artifact }}
+          if-no-files-found: error
