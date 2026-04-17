@@ -66,6 +66,10 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() {
+	rootCmd.InitDefaultVersionFlag()
+	if f := rootCmd.Flags().Lookup("version"); f != nil {
+		f.Shorthand = "v"
+	}
 	if err := config.EnsureDirs(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
