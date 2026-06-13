@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rushteam/skills-cli/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -73,27 +74,7 @@ func DiscoverSkills(basePath string) ([]*Skill, error) {
 		}
 	}
 
-	searchDirs := []string{
-		basePath,
-		filepath.Join(basePath, "skills"),
-		filepath.Join(basePath, "skills", ".curated"),
-		filepath.Join(basePath, "skills", ".experimental"),
-		filepath.Join(basePath, "skills", ".system"),
-		filepath.Join(basePath, ".agents", "skills"),
-		filepath.Join(basePath, ".claude", "skills"),
-		filepath.Join(basePath, ".cursor", "skills"),
-		filepath.Join(basePath, ".codebuddy", "skills"),
-		filepath.Join(basePath, ".codex", "skills"),
-		filepath.Join(basePath, ".trae", "skills"),
-		filepath.Join(basePath, ".windsurf", "skills"),
-		filepath.Join(basePath, ".qoder", "skills"),
-		filepath.Join(basePath, ".roo", "skills"),
-		filepath.Join(basePath, ".goose", "skills"),
-		filepath.Join(basePath, ".continue", "skills"),
-		filepath.Join(basePath, ".openhands", "skills"),
-	}
-
-	for _, dir := range searchDirs {
+	for _, dir := range discoverSearchDirs(basePath) {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
@@ -116,6 +97,34 @@ func DiscoverSkills(basePath string) ([]*Skill, error) {
 	}
 
 	return skills, nil
+}
+
+// discoverSearchDirs returns the directories under basePath that may contain
+// skills. The per-agent skills directories are derived from the agent config so
+// the list stays in sync with the supported agents instead of being hardcoded.
+func discoverSearchDirs(basePath string) []string {
+	dirs := []string{
+		basePath,
+		filepath.Join(basePath, "skills"),
+		filepath.Join(basePath, "skills", ".curated"),
+		filepath.Join(basePath, "skills", ".experimental"),
+		filepath.Join(basePath, "skills", ".system"),
+	}
+	seen := make(map[string]bool, len(dirs))
+	for _, d := range dirs {
+		seen[d] = true
+	}
+	for _, ag := range config.DefaultAgents() {
+		if ag.ProjectPath == "" {
+			continue
+		}
+		dir := filepath.Join(basePath, ag.ProjectPath)
+		if !seen[dir] {
+			dirs = append(dirs, dir)
+			seen[dir] = true
+		}
+	}
+	return dirs
 }
 
 func ListSkillFiles(skillDir string) ([]string, error) {

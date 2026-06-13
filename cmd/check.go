@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"encoding/json"
+	stderrors "errors"
 	"fmt"
 
 	"github.com/charmbracelet/lipgloss"
@@ -9,10 +11,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var checkJSON bool
+
 var checkCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check for available skill updates",
 	RunE:  runCheck,
+}
+
+func init() {
+	checkCmd.Flags().BoolVar(&checkJSON, "json", false, "Output as JSON")
 }
 
 func runCheck(cmd *cobra.Command, args []string) error {
@@ -22,20 +30,28 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(lock.Skills) == 0 {
+		if checkJSON {
+			fmt.Println(`{"updates":[],"skipped":[],"errors":[]}`)
+			return nil
+		}
 		fmt.Println(dimStyle.Render("No skills tracked in lock file."))
 		fmt.Println(dimStyle.Render("Install skills with: skills-cli add <source>"))
 		return nil
 	}
 
-	fmt.Println(textStyle.Render("Checking for skill updates..."))
-	fmt.Println()
+	if !checkJSON {
+		fmt.Println(textStyle.Render("Checking for skill updates..."))
+		fmt.Println()
+	}
 
 	cyanStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	okStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 
 	var updates []string
 	var skipped []string
 	var errors []string
+	rateLimited := false
 
 	for name, entry := range lock.Skills {
 		if entry.SkillFolderHash == "" || entry.SkillPath == "" || entry.Source == "" {
@@ -43,8 +59,12 @@ func runCheck(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		latestHash, err := registry.FetchSkillFolderHash(entry.Source, entry.SkillPath, "")
+		latestHash, err := registry.FetchSkillFolderHash(entry.Source, entry.SkillPath, entry.Ref, "")
 		if err != nil {
+			if stderrors.Is(err, registry.ErrRateLimited) {
+				rateLimited = true
+				break
+			}
 			errors = append(errors, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
@@ -52,6 +72,25 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		if latestHash != entry.SkillFolderHash {
 			updates = append(updates, name)
 		}
+	}
+
+	if checkJSON {
+		out := map[string]any{
+			"updates":      updates,
+			"skipped":      skipped,
+			"errors":       errors,
+			"rate_limited": rateLimited,
+		}
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
+		return nil
+	}
+
+	if rateLimited {
+		fmt.Println(errStyle.Render("GitHub API rate limit exceeded."))
+		fmt.Println(dimStyle.Render("Set GITHUB_TOKEN or GH_TOKEN to raise the limit, then retry."))
+		fmt.Println()
+		return nil
 	}
 
 	if len(updates) == 0 {

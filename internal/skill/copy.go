@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 )
 
+// CopyDir recursively copies src into dst, preserving file mode bits (so
+// executable scripts inside a skill keep their +x). Symlinks are recreated as
+// symlinks rather than followed.
 func CopyDir(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
@@ -19,11 +22,56 @@ func CopyDir(src, dst string) error {
 			return err
 		}
 		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, 0o755)
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			os.Remove(target)
+			return os.Symlink(link, target)
 		}
-		return copyFile(path, target)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		return copyFile(path, target, info.Mode().Perm())
 	})
+}
+
+// ReplaceDir atomically replaces dst with a copy of src. It copies into a
+// temporary sibling directory first, then swaps it into place with rename, so a
+// failure mid-copy never leaves dst partially written.
+func ReplaceDir(src, dst string) error {
+	tmp := dst + ".skills-cli-tmp"
+	old := dst + ".skills-cli-old"
+	os.RemoveAll(tmp)
+	os.RemoveAll(old)
+
+	if err := CopyDir(src, tmp); err != nil {
+		os.RemoveAll(tmp)
+		return err
+	}
+
+	dstExists := false
+	if _, err := os.Lstat(dst); err == nil {
+		dstExists = true
+		if err := os.Rename(dst, old); err != nil {
+			os.RemoveAll(tmp)
+			return err
+		}
+	}
+
+	if err := os.Rename(tmp, dst); err != nil {
+		// Roll back to the previous contents on failure.
+		if dstExists {
+			os.Rename(old, dst)
+		}
+		os.RemoveAll(tmp)
+		return err
+	}
+
+	os.RemoveAll(old)
+	return nil
 }
 
 func SymlinkDir(src, dst string) error {
@@ -46,19 +94,21 @@ func RemoveSkillDir(path string) error {
 	return os.RemoveAll(path)
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string, perm os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, in)
-	return err
+	if _, err = io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Chmod(perm)
 }

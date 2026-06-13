@@ -42,19 +42,19 @@ skills-cli push --all
 
 | 命令 | 说明 |
 |------|------|
-| `skills-cli find [query]` | 搜索 skills.sh 上的远程 skill |
+| `skills-cli find [query]` | 搜索 skills.sh 上的远程 skill，可直接选择安装 |
 | `skills-cli add <source>` | 从 GitHub/GitLab/本地路径安装 skill |
-| `skills-cli check` | 检查已安装 skill 是否有更新 |
-| `skills-cli update` | 更新所有已安装 skill |
+| `skills-cli check` | 检查已安装 skill 是否有更新（支持 `--json`） |
+| `skills-cli update [skills...]` | 更新全部或指定 skill |
 | `skills-cli init [name]` | 创建 SKILL.md 模板 |
-| `skills-cli remove [skills...]` | 移除已安装 skill |
+| `skills-cli remove [skills...]` | 移除 skill（同时清理 agent 目录副本，`--central-only` 仅删中央） |
 
 ### 本地同步
 
 | 命令 | 说明 |
 |------|------|
-| `skills-cli list` | 列出所有已安装 skills（中央/全局/工程） |
-| `skills-cli scan` | 扫描 agent 目录，显示同步状态（不拉取） |
+| `skills-cli list` | 列出所有已安装 skills（中央/全局/工程，支持 `--json`） |
+| `skills-cli scan` | 扫描 agent 目录，显示同步状态（不拉取，支持 `--json`） |
 | `skills-cli pull` | 从 agent 目录提取到中央目录 |
 | `skills-cli push` | 从中央目录下发到 agent 目录 |
 | `skills-cli watch` | 监听文件变化，自动同步 |
@@ -160,13 +160,33 @@ skills-cli config add-project /path/to/my-app --agents cursor,claude-code
 skills-cli config list-projects
 ```
 
+## 更新检查
+
+`check` / `update` 通过对比 GitHub 仓库中 skill 目录的 git tree SHA 判断是否有更新，
+安装时（GitHub 源）会自动记录该哈希与分支到锁文件。匿名 GitHub API 限流为 60 次/小时，
+批量检查较易触限，可设置 `GITHUB_TOKEN` 或 `GH_TOKEN` 环境变量提高额度：
+
+```bash
+export GITHUB_TOKEN=ghp_xxx
+skills-cli check
+```
+
+非 GitHub 源（GitLab、本地路径）暂不支持自动更新检查，会在 `check` 中列为「无法自动检查」。
+
 ## 数据目录
 
 | 路径 | 说明 |
 |------|------|
 | `~/.skills-cli/config.yaml` | 配置文件 |
 | `~/.skills-cli/skills/` | 中央 skills 存储 |
-| `~/.skills-cli/skill-lock.json` | 已安装 skill 的锁文件 |
+| `~/.skills-cli/skill-lock.json` | 已安装 skill 的锁文件（含来源、分支、目录哈希） |
+
+## Shell 补全
+
+```bash
+# 生成并加载 zsh 补全（bash/fish/powershell 同理）
+skills-cli completion zsh > "${fpath[1]}/_skills-cli"
+```
 
 ## 支持的 Agent
 

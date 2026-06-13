@@ -29,7 +29,7 @@ type SyncTarget struct {
 }
 
 type SyncOptions struct {
-	Force   bool
+	Force    bool
 	DiffOnly bool
 }
 
@@ -117,55 +117,9 @@ func Pull(targets []SyncTarget, opts SyncOptions) error {
 			continue
 		}
 
-		label := t.AgentName
-		if t.Scope == "project" {
-			label = fmt.Sprintf("%s @ %s", t.AgentName, agent.ShortenPath(t.Project))
-		}
-		fmt.Println(infoStyle.Render(fmt.Sprintf("  Pulling from %s (%d skills)", label, len(skillNames))))
-
+		fmt.Println(infoStyle.Render(fmt.Sprintf("  Pulling from %s (%d skills)", targetLabel(t), len(skillNames))))
 		for _, name := range skillNames {
-			srcDir := filepath.Join(t.Dir, name)
-			dstDir := filepath.Join(centralDir, name)
-
-			if dirExists(dstDir) {
-				hasDiff, _ := skill.HasDifferences(srcDir, dstDir)
-				if !hasDiff {
-					fmt.Println(dimStyle.Render(fmt.Sprintf("    %s (up to date)", name)))
-					continue
-				}
-
-				diffs, _ := skill.CompareSkillDirs(srcDir, dstDir)
-				fmt.Println(warnStyle.Render(fmt.Sprintf("    %s (conflict)", name)))
-				fmt.Print(skill.FormatDiff(diffs))
-
-				if opts.DiffOnly {
-					continue
-				}
-
-				if !opts.Force {
-					action, err := promptConflict(name)
-					if err != nil || action == "skip" {
-						fmt.Println(dimStyle.Render("    Skipped"))
-						continue
-					}
-					if action == "keep" {
-						fmt.Println(dimStyle.Render("    Kept existing"))
-						continue
-					}
-				}
-			}
-
-			if opts.DiffOnly {
-				fmt.Println(infoStyle.Render(fmt.Sprintf("    %s (would copy)", name)))
-				continue
-			}
-
-			os.RemoveAll(dstDir)
-			if err := skill.CopyDir(srcDir, dstDir); err != nil {
-				fmt.Println(errorStyle.Render(fmt.Sprintf("    %s: copy failed: %v", name, err)))
-				continue
-			}
-			fmt.Println(successStyle.Render(fmt.Sprintf("    %s ✓", name)))
+			syncSkill(name, filepath.Join(t.Dir, name), filepath.Join(centralDir, name), opts)
 		}
 	}
 	return nil
@@ -183,63 +137,67 @@ func Push(targets []SyncTarget, opts SyncOptions) error {
 	}
 
 	for _, t := range targets {
-		label := t.AgentName
-		if t.Scope == "project" {
-			label = fmt.Sprintf("%s @ %s", t.AgentName, agent.ShortenPath(t.Project))
-		}
 		if !dirExists(t.Dir) {
-			fmt.Println(dimStyle.Render(fmt.Sprintf("  Skipping %s: directory does not exist (%s)", label, t.Dir)))
+			fmt.Println(dimStyle.Render(fmt.Sprintf("  Skipping %s: directory does not exist (%s)", targetLabel(t), t.Dir)))
 			continue
 		}
 
-		fmt.Println(infoStyle.Render(fmt.Sprintf("  Pushing to %s (%d skills)", label, len(skillNames))))
-
+		fmt.Println(infoStyle.Render(fmt.Sprintf("  Pushing to %s (%d skills)", targetLabel(t), len(skillNames))))
 		for _, name := range skillNames {
-			srcDir := filepath.Join(centralDir, name)
-			dstDir := filepath.Join(t.Dir, name)
-
-			if dirExists(dstDir) {
-				hasDiff, _ := skill.HasDifferences(srcDir, dstDir)
-				if !hasDiff {
-					fmt.Println(dimStyle.Render(fmt.Sprintf("    %s (up to date)", name)))
-					continue
-				}
-
-				diffs, _ := skill.CompareSkillDirs(srcDir, dstDir)
-				fmt.Println(warnStyle.Render(fmt.Sprintf("    %s (conflict)", name)))
-				fmt.Print(skill.FormatDiff(diffs))
-
-				if opts.DiffOnly {
-					continue
-				}
-
-				if !opts.Force {
-					action, err := promptConflict(name)
-					if err != nil || action == "skip" {
-						fmt.Println(dimStyle.Render("    Skipped"))
-						continue
-					}
-					if action == "keep" {
-						fmt.Println(dimStyle.Render("    Kept existing"))
-						continue
-					}
-				}
-			}
-
-			if opts.DiffOnly {
-				fmt.Println(infoStyle.Render(fmt.Sprintf("    %s (would copy)", name)))
-				continue
-			}
-
-			os.RemoveAll(dstDir)
-			if err := skill.CopyDir(srcDir, dstDir); err != nil {
-				fmt.Println(errorStyle.Render(fmt.Sprintf("    %s: copy failed: %v", name, err)))
-				continue
-			}
-			fmt.Println(successStyle.Render(fmt.Sprintf("    %s ✓", name)))
+			syncSkill(name, filepath.Join(centralDir, name), filepath.Join(t.Dir, name), opts)
 		}
 	}
 	return nil
+}
+
+func targetLabel(t SyncTarget) string {
+	if t.Scope == "project" {
+		return fmt.Sprintf("%s @ %s", t.AgentName, agent.ShortenPath(t.Project))
+	}
+	return t.AgentName
+}
+
+// syncSkill copies one skill from srcDir to dstDir, handling conflict detection,
+// diff display, prompting and dry-run. It is shared by both push and pull.
+func syncSkill(name, srcDir, dstDir string, opts SyncOptions) {
+	if dirExists(dstDir) {
+		hasDiff, _ := skill.HasDifferences(srcDir, dstDir)
+		if !hasDiff {
+			fmt.Println(dimStyle.Render(fmt.Sprintf("    %s (up to date)", name)))
+			return
+		}
+
+		diffs, _ := skill.CompareSkillDirs(srcDir, dstDir)
+		fmt.Println(warnStyle.Render(fmt.Sprintf("    %s (conflict)", name)))
+		fmt.Print(skill.FormatDiff(diffs))
+
+		if opts.DiffOnly {
+			return
+		}
+
+		if !opts.Force {
+			action, err := promptConflict(name)
+			if err != nil || action == "skip" {
+				fmt.Println(dimStyle.Render("    Skipped"))
+				return
+			}
+			if action == "keep" {
+				fmt.Println(dimStyle.Render("    Kept existing"))
+				return
+			}
+		}
+	}
+
+	if opts.DiffOnly {
+		fmt.Println(infoStyle.Render(fmt.Sprintf("    %s (would copy)", name)))
+		return
+	}
+
+	if err := skill.ReplaceDir(srcDir, dstDir); err != nil {
+		fmt.Println(errorStyle.Render(fmt.Sprintf("    %s: copy failed: %v", name, err)))
+		return
+	}
+	fmt.Println(successStyle.Render(fmt.Sprintf("    %s ✓", name)))
 }
 
 // resolveAgentName returns the exact key in agents that matches name, trying
