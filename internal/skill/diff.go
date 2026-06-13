@@ -18,10 +18,17 @@ var (
 )
 
 type FileDiff struct {
-	RelPath   string
-	Status    string // "modified", "added", "deleted"
+	RelPath    string
+	Status     string // "modified", "added", "deleted"
 	OldContent string
 	NewContent string
+	Binary     bool
+}
+
+// isBinary reports whether content looks like a binary blob. A NUL byte is a
+// reliable signal that line-based diffing would produce garbage.
+func isBinary(content string) bool {
+	return strings.IndexByte(content, 0) != -1
 }
 
 func CompareSkillDirs(srcDir, dstDir string) ([]FileDiff, error) {
@@ -52,12 +59,14 @@ func CompareSkillDirs(srcDir, dstDir string) ([]FileDiff, error) {
 				RelPath:    f,
 				Status:     "added",
 				NewContent: srcContent,
+				Binary:     isBinary(srcContent),
 			})
 		} else if !hasSrc && hasDst {
 			diffs = append(diffs, FileDiff{
 				RelPath:    f,
 				Status:     "deleted",
 				OldContent: dstContent,
+				Binary:     isBinary(dstContent),
 			})
 		} else if srcContent != dstContent {
 			diffs = append(diffs, FileDiff{
@@ -65,6 +74,7 @@ func CompareSkillDirs(srcDir, dstDir string) ([]FileDiff, error) {
 				Status:     "modified",
 				OldContent: dstContent,
 				NewContent: srcContent,
+				Binary:     isBinary(srcContent) || isBinary(dstContent),
 			})
 		}
 	}
@@ -86,6 +96,12 @@ func FormatDiff(diffs []FileDiff) string {
 
 	var sb strings.Builder
 	for _, d := range diffs {
+		if d.Binary {
+			label := map[string]string{"added": "new binary file", "deleted": "binary file deleted", "modified": "binary file differs"}[d.Status]
+			sb.WriteString(headerStyle.Render(fmt.Sprintf("  ~ %s (%s)", d.RelPath, label)))
+			sb.WriteByte('\n')
+			continue
+		}
 		switch d.Status {
 		case "added":
 			sb.WriteString(headerStyle.Render(fmt.Sprintf("  + %s (new file)", d.RelPath)))

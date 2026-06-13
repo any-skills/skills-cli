@@ -10,14 +10,15 @@ import (
 	"github.com/rushteam/skills-cli/internal/agent"
 	"github.com/rushteam/skills-cli/internal/config"
 	sk "github.com/rushteam/skills-cli/internal/skill"
+	syncer "github.com/rushteam/skills-cli/internal/sync"
 	"github.com/spf13/cobra"
 )
 
 var (
-	removeGlobal bool
-	removeAgent  []string
-	removeYes    bool
-	removeAll    bool
+	removeAgent       []string
+	removeYes         bool
+	removeAll         bool
+	removeCentralOnly bool
 )
 
 var removeCmd = &cobra.Command{
@@ -28,10 +29,10 @@ var removeCmd = &cobra.Command{
 }
 
 func init() {
-	removeCmd.Flags().BoolVarP(&removeGlobal, "global", "g", false, "Remove from global scope")
-	removeCmd.Flags().StringSliceVarP(&removeAgent, "agent", "a", nil, "Remove from specific agent(s)")
+	removeCmd.Flags().StringSliceVarP(&removeAgent, "agent", "a", nil, "Only remove agent copies from these agent(s)")
 	removeCmd.Flags().BoolVarP(&removeYes, "yes", "y", false, "Skip confirmation")
 	removeCmd.Flags().BoolVar(&removeAll, "all", false, "Remove all skills")
+	removeCmd.Flags().BoolVar(&removeCentralOnly, "central-only", false, "Only remove from the central store, leave agent copies in place")
 }
 
 func runRemove(cmd *cobra.Command, args []string) error {
@@ -83,6 +84,19 @@ func runRemove(cmd *cobra.Command, args []string) error {
 
 	lock, _ := config.LoadLock()
 
+	// Agent copies to clean up alongside the central store, unless --central-only.
+	var targets []syncer.SyncTarget
+	if !removeCentralOnly {
+		cfg, err := config.Load()
+		if err == nil {
+			if len(removeAgent) > 0 {
+				targets = syncer.ResolveTargets(cfg, removeAgent, nil, false)
+			} else {
+				targets = syncer.ResolveTargets(cfg, nil, nil, true)
+			}
+		}
+	}
+
 	for _, name := range toRemove {
 		dir := filepath.Join(centralDir, name)
 		if err := sk.RemoveSkillDir(dir); err != nil && !os.IsNotExist(err) {
@@ -92,6 +106,18 @@ func runRemove(cmd *cobra.Command, args []string) error {
 		}
 		lock.RemoveSkill(name)
 		fmt.Println(okStyle.Render(fmt.Sprintf("  ✓ removed %s", name)))
+
+		for _, t := range targets {
+			agentCopy := filepath.Join(t.Dir, name)
+			if _, statErr := os.Lstat(agentCopy); statErr != nil {
+				continue
+			}
+			if err := sk.RemoveSkillDir(agentCopy); err != nil && !os.IsNotExist(err) {
+				fmt.Println(dimStyle.Render(fmt.Sprintf("      ! %s: %v", agent.ShortenPath(agentCopy), err)))
+				continue
+			}
+			fmt.Println(dimStyle.Render(fmt.Sprintf("      - %s", agent.ShortenPath(agentCopy))))
+		}
 	}
 
 	config.SaveLock(lock)

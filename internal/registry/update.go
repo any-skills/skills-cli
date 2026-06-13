@@ -2,12 +2,17 @@ package registry
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 )
+
+// ErrRateLimited is returned when the GitHub API rejects the request because of
+// rate limiting. Callers can detect it with errors.Is to hint about GITHUB_TOKEN.
+var ErrRateLimited = errors.New("GitHub API rate limit exceeded")
 
 type TreeEntry struct {
 	Path string `json:"path"`
@@ -16,8 +21,9 @@ type TreeEntry struct {
 }
 
 type TreeResponse struct {
-	SHA  string      `json:"sha"`
-	Tree []TreeEntry `json:"tree"`
+	SHA       string      `json:"sha"`
+	Tree      []TreeEntry `json:"tree"`
+	Truncated bool        `json:"truncated"`
 }
 
 func getGitHubToken() string {
@@ -29,12 +35,35 @@ func getGitHubToken() string {
 	return ""
 }
 
-func FetchSkillFolderHash(ownerRepo string, skillPath string, token string) (string, error) {
+// FetchSkillFolderHash returns the git tree SHA of the skill's folder. When ref
+// is empty it tries the repository's common default branches in turn so repos
+// using "master" (or any non-"main" default) still resolve correctly.
+func FetchSkillFolderHash(ownerRepo string, skillPath string, ref string, token string) (string, error) {
 	if token == "" {
 		token = getGitHubToken()
 	}
 
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/git/trees/main?recursive=1", ownerRepo)
+	refs := []string{ref}
+	if ref == "" {
+		refs = []string{"HEAD", "main", "master"}
+	}
+
+	var lastErr error
+	for _, r := range refs {
+		hash, err := fetchTreeHash(ownerRepo, skillPath, r, token)
+		if err == nil {
+			return hash, nil
+		}
+		if errors.Is(err, ErrRateLimited) {
+			return "", err
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+func fetchTreeHash(ownerRepo, skillPath, ref, token string) (string, error) {
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/git/trees/%s?recursive=1", ownerRepo, ref)
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest("GET", apiURL, nil)
@@ -52,6 +81,12 @@ func FetchSkillFolderHash(ownerRepo string, skillPath string, token string) (str
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		if resp.Header.Get("X-RateLimit-Remaining") == "0" {
+			return "", ErrRateLimited
+		}
+		return "", ErrRateLimited
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
@@ -63,6 +98,12 @@ func FetchSkillFolderHash(ownerRepo string, skillPath string, token string) (str
 
 	skillPath = strings.TrimSuffix(skillPath, "/SKILL.md")
 	skillPath = strings.TrimSuffix(skillPath, "/")
+
+	// A skill living at the repository root has no dedicated tree entry; use the
+	// root tree SHA as its folder hash.
+	if skillPath == "" || skillPath == "." {
+		return tree.SHA, nil
+	}
 
 	for _, entry := range tree.Tree {
 		if entry.Type == "tree" && entry.Path == skillPath {

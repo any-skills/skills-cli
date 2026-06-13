@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/rushteam/skills-cli/internal/agent"
 	"github.com/rushteam/skills-cli/internal/config"
-	"github.com/rushteam/skills-cli/internal/skill"
+	syncer "github.com/rushteam/skills-cli/internal/sync"
 )
 
 const debounceDelay = 300 * time.Millisecond
@@ -20,8 +21,6 @@ const debounceDelay = 300 * time.Millisecond
 var (
 	infoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	dimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	okStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	errStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 )
 
 type Watcher struct {
@@ -195,7 +194,7 @@ func (w *Watcher) processBatch() {
 	isCentralChange := false
 	for path := range changes {
 		rel, err := filepath.Rel(centralDir, path)
-		if err == nil && !filepath.IsAbs(rel) && rel[0] != '.' {
+		if err == nil && rel != "" && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, "..") {
 			isCentralChange = true
 			break
 		}
@@ -215,53 +214,15 @@ func (w *Watcher) processBatch() {
 	}
 }
 
+// pushAll and pullAll delegate to the sync package so the watcher and the
+// push/pull commands share one implementation. Force is set because watch
+// auto-syncs without interactive conflict prompts.
 func (w *Watcher) pushAll() {
-	centralDir := config.SkillsHome()
-	skillNames, _ := agent.ScanSkillsInDir(centralDir)
-
-	for _, ag := range w.cfg.Agents {
-		dir := config.ResolveGlobalPath(ag)
-		w.syncSkillsTo(centralDir, dir, skillNames)
-	}
-	for _, proj := range w.cfg.Projects {
-		agents := proj.Agents
-		if len(agents) == 0 {
-			agents = agent.DetectProjectAgents(proj.Path, w.cfg.Agents)
-		}
-		for _, agName := range agents {
-			dir := agent.ResolveProjectSkillsDir(proj.Path, agName, w.cfg.Agents)
-			if dir != "" {
-				w.syncSkillsTo(centralDir, dir, skillNames)
-			}
-		}
-	}
+	targets := syncer.ResolveTargets(w.cfg, nil, nil, true)
+	syncer.Push(targets, syncer.SyncOptions{Force: true})
 }
 
 func (w *Watcher) pullAll() {
-	centralDir := config.SkillsHome()
-	allDirs := w.agentDirs()
-	for _, dir := range allDirs {
-		skillNames, _ := agent.ScanSkillsInDir(dir)
-		w.syncSkillsTo(dir, centralDir, skillNames)
-	}
-}
-
-func (w *Watcher) syncSkillsTo(srcBase, dstBase string, skillNames []string) {
-	os.MkdirAll(dstBase, 0o755)
-	for _, name := range skillNames {
-		srcDir := filepath.Join(srcBase, name)
-		dstDir := filepath.Join(dstBase, name)
-
-		hasDiff, _ := skill.HasDifferences(srcDir, dstDir)
-		if !hasDiff {
-			continue
-		}
-
-		os.RemoveAll(dstDir)
-		if err := skill.CopyDir(srcDir, dstDir); err != nil {
-			fmt.Println(errStyle.Render(fmt.Sprintf("  sync %s failed: %v", name, err)))
-			continue
-		}
-		fmt.Println(okStyle.Render(fmt.Sprintf("  synced: %s -> %s", name, agent.ShortenPath(dstBase))))
-	}
+	targets := syncer.ResolveTargets(w.cfg, nil, nil, true)
+	syncer.Pull(targets, syncer.SyncOptions{Force: true})
 }

@@ -12,11 +12,11 @@ import (
 )
 
 const (
-	AppDir       = ".skills-cli"
-	ConfigFile   = "config.yaml"
-	LockFile     = "skill-lock.json"
-	SkillsDir    = "skills"
-	LockVersion  = 1
+	AppDir      = ".skills-cli"
+	ConfigFile  = "config.yaml"
+	LockFile    = "skill-lock.json"
+	SkillsDir   = "skills"
+	LockVersion = 1
 
 	WatchCentralToAgents = "push"
 	WatchAgentsToCentral = "pull"
@@ -69,6 +69,7 @@ type SkillLockEntry struct {
 	Source          string `json:"source"`
 	SourceType      string `json:"source_type"`
 	SourceURL       string `json:"source_url"`
+	Ref             string `json:"ref,omitempty"`
 	SkillPath       string `json:"skill_path"`
 	SkillFolderHash string `json:"skill_folder_hash"`
 	InstalledAt     string `json:"installed_at"`

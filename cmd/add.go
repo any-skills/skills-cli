@@ -2,24 +2,21 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rushteam/skills-cli/internal/config"
+	"github.com/rushteam/skills-cli/internal/registry"
 	"github.com/rushteam/skills-cli/internal/skill"
 	"github.com/rushteam/skills-cli/internal/source"
 	"github.com/spf13/cobra"
 )
 
 var (
-	addGlobal bool
-	addAgent  []string
-	addSkill  []string
-	addYes    bool
-	addCopy   bool
-	addAll    bool
+	addSkill []string
+	addYes   bool
+	addAll   bool
 )
 
 var addCmd = &cobra.Command{
@@ -35,12 +32,9 @@ var addCmd = &cobra.Command{
 }
 
 func init() {
-	addCmd.Flags().BoolVarP(&addGlobal, "global", "g", false, "Install to global skills directory")
-	addCmd.Flags().StringSliceVarP(&addAgent, "agent", "a", nil, "Target agent(s)")
 	addCmd.Flags().StringSliceVarP(&addSkill, "skill", "s", nil, "Specific skill name(s) to install")
 	addCmd.Flags().BoolVarP(&addYes, "yes", "y", false, "Skip confirmation prompts")
-	addCmd.Flags().BoolVar(&addCopy, "copy", false, "Copy files instead of symlinking")
-	addCmd.Flags().BoolVar(&addAll, "all", false, "Install all skills to all agents")
+	addCmd.Flags().BoolVar(&addAll, "all", false, "Install all skills found in the source")
 }
 
 func runAdd(cmd *cobra.Command, args []string) error {
@@ -139,18 +133,30 @@ func runAddWithArgs(src string, skillFilter string) error {
 
 	for _, s := range skills {
 		dstDir := filepath.Join(centralDir, s.Name)
-		os.RemoveAll(dstDir)
-		if err := skill.CopyDir(s.Path, dstDir); err != nil {
+		if err := skill.ReplaceDir(s.Path, dstDir); err != nil {
 			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(
 				fmt.Sprintf("  ✗ %s: %v", s.Name, err)))
 			continue
 		}
 
+		skillPath := getRelSkillPath(tmpDir, s.Path)
+
+		// Record the folder hash so `check`/`update` can detect upstream changes.
+		// Only GitHub-hosted skills support this; failures are non-fatal.
+		var folderHash string
+		if ownerRepo != "" && (ps.Type == source.SourceGitHub || ps.Type == source.SourceGit) {
+			if h, err := registry.FetchSkillFolderHash(ownerRepo, skillPath, ps.Ref, ""); err == nil {
+				folderHash = h
+			}
+		}
+
 		lock.AddSkill(s.Name, config.SkillLockEntry{
-			Source:     ownerRepo,
-			SourceType: string(ps.Type),
-			SourceURL:  ps.URL,
-			SkillPath:  getRelSkillPath(tmpDir, s.Path),
+			Source:          ownerRepo,
+			SourceType:      string(ps.Type),
+			SourceURL:       ps.URL,
+			Ref:             ps.Ref,
+			SkillPath:       skillPath,
+			SkillFolderHash: folderHash,
 		})
 		fmt.Println(okStyle.Render(fmt.Sprintf("  ✓ %s", s.Name)))
 	}

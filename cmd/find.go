@@ -43,8 +43,6 @@ func findNonInteractive(query string) error {
 
 	cyanStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	fmt.Println()
-	fmt.Println(dimStyle.Render("Install with") + " skills-cli add <source>")
-	fmt.Println()
 
 	for _, s := range results {
 		pkg := s.Source
@@ -58,6 +56,44 @@ func findNonInteractive(query string) error {
 		}
 		fmt.Printf("  %s@%s%s\n", textStyle.Render(pkg), s.Name, installBadge)
 		fmt.Printf("  %s\n\n", dimStyle.Render("└ https://skills.sh/"+s.Slug))
+	}
+
+	return selectAndInstall(results)
+}
+
+// selectAndInstall lets the user pick one of the search results to install.
+// If the prompt is cancelled (e.g. a non-interactive terminal), it returns nil.
+func selectAndInstall(results []registry.SearchResult) error {
+	var options []huh.Option[string]
+	for _, s := range results {
+		pkg := s.Source
+		if pkg == "" {
+			pkg = s.Slug
+		}
+		label := fmt.Sprintf("%s (%s)", s.Name, pkg)
+		if installs := registry.FormatInstalls(s.Installs); installs != "" {
+			label += " - " + installs
+		}
+		options = append(options, huh.NewOption(label, pkg+"@"+s.Name))
+	}
+
+	var selected string
+	err := huh.NewSelect[string]().
+		Title("Select a skill to install:").
+		Options(options...).
+		Value(&selected).
+		Run()
+	if err != nil || selected == "" {
+		fmt.Println(dimStyle.Render("Cancelled"))
+		return nil
+	}
+
+	parts := strings.SplitN(selected, "@", 2)
+	if len(parts) == 2 {
+		fmt.Println()
+		fmt.Printf("  Installing %s from %s...\n", titleStyle.Render(parts[1]), dimStyle.Render(parts[0]))
+		fmt.Println()
+		return runAddWithArgs(parts[0], parts[1])
 	}
 	return nil
 }
@@ -89,39 +125,7 @@ func findInteractive() error {
 		return nil
 	}
 
-	var options []huh.Option[string]
-	for _, s := range results {
-		pkg := s.Source
-		if pkg == "" {
-			pkg = s.Slug
-		}
-		label := fmt.Sprintf("%s (%s)", s.Name, pkg)
-		installs := registry.FormatInstalls(s.Installs)
-		if installs != "" {
-			label += " - " + installs
-		}
-		options = append(options, huh.NewOption(label, pkg+"@"+s.Name))
-	}
-
-	var selected string
-	err = huh.NewSelect[string]().
-		Title("Select a skill to install:").
-		Options(options...).
-		Value(&selected).
-		Run()
-	if err != nil || selected == "" {
-		fmt.Println(dimStyle.Render("Cancelled"))
-		return nil
-	}
-
-	parts := strings.SplitN(selected, "@", 2)
-	if len(parts) == 2 {
-		fmt.Println()
-		fmt.Printf("  Installing %s from %s...\n", titleStyle.Render(parts[1]), dimStyle.Render(parts[0]))
-		fmt.Println()
-		return runAddWithArgs(parts[0], parts[1])
-	}
-	return nil
+	return selectAndInstall(results)
 }
 
 func hasNonASCII(s string) bool {

@@ -3,13 +3,27 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rushteam/skills-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
-var Version = "0.1.0"
+// Version is injected at build time via -ldflags. When the binary is built
+// without that flag (e.g. `go install`), it falls back to the module version
+// recorded in the build info so `--version` still reports something useful.
+var Version = "dev"
+
+func resolveVersion() string {
+	if Version != "dev" && Version != "" {
+		return Version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return Version
+}
 
 var (
 	titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
@@ -18,12 +32,12 @@ var (
 )
 
 var logoLines = []string{
-	"███████╗██╗ ██╗██╗██╗ ██╗ ███████╗",
-	"██╔════╝██║ ██╔╝██║██║ ██║ ██╔════╝",
-	"███████╗█████╔╝ ██║██║ ██║ ███████╗",
-	"╚════██║██╔═██╗ ██║██║ ██║ ╚════██║",
-	"███████║██║ ██╗██║███████╗███████╗███████║",
-	"╚══════╝╚═╝ ╚═╝╚═╝╚══════╝╚══════╝╚══════╝",
+	"███████╗██╗  ██╗██╗██╗     ██╗     ███████╗",
+	"██╔════╝██║ ██╔╝██║██║     ██║     ██╔════╝",
+	"███████╗█████╔╝ ██║██║     ██║     ███████╗",
+	"╚════██║██╔═██╗ ██║██║     ██║     ╚════██║",
+	"███████║██║  ██╗██║███████╗███████╗███████║",
+	"╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝",
 }
 
 var grays = []lipgloss.Color{"250", "248", "245", "243", "240", "238"}
@@ -66,6 +80,7 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() {
+	rootCmd.Version = resolveVersion()
 	rootCmd.InitDefaultVersionFlag()
 	if f := rootCmd.Flags().Lookup("version"); f != nil {
 		f.Shorthand = "v"

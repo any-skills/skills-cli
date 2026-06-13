@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ var (
 	scanProject []string
 	scanAll     bool
 	scanDiff    bool
+	scanJSON    bool
 )
 
 var scanCmd = &cobra.Command{
@@ -34,6 +36,7 @@ func init() {
 	scanCmd.Flags().StringSliceVarP(&scanProject, "project", "p", nil, "Project path(s) to scan")
 	scanCmd.Flags().BoolVar(&scanAll, "all", false, "Scan all registered projects and global agents")
 	scanCmd.Flags().BoolVar(&scanDiff, "diff", false, "Show diff details for modified skills")
+	scanCmd.Flags().BoolVar(&scanJSON, "json", false, "Output as JSON")
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
@@ -44,10 +47,18 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	targets := syncer.ResolveTargets(cfg, scanAgent, scanProject, scanAll)
 	if len(targets) == 0 {
+		if scanJSON {
+			fmt.Println("[]")
+			return nil
+		}
 		fmt.Println(dimStyle.Render("No targets to scan."))
 		fmt.Println(dimStyle.Render("Use --agent, --project, or --all to specify sources."))
 		fmt.Println(dimStyle.Render("Or configure default_agents in: ") + textStyle.Render(config.ConfigPath()))
 		return nil
+	}
+
+	if scanJSON {
+		return scanJSONOutput(targets)
 	}
 
 	showLogo()
@@ -128,6 +139,53 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
+	return nil
+}
+
+type scanSkillJSON struct {
+	Name   string `json:"name"`
+	Status string `json:"status"` // "new", "modified", "synced"
+}
+
+type scanTargetJSON struct {
+	Agent   string          `json:"agent"`
+	Scope   string          `json:"scope"`
+	Project string          `json:"project,omitempty"`
+	Dir     string          `json:"dir"`
+	Skills  []scanSkillJSON `json:"skills"`
+}
+
+func scanJSONOutput(targets []syncer.SyncTarget) error {
+	centralDir := config.SkillsHome()
+	var out []scanTargetJSON
+
+	for _, t := range targets {
+		skillNames, err := agent.ScanSkillsInDir(t.Dir)
+		if err != nil || len(skillNames) == 0 {
+			continue
+		}
+		entry := scanTargetJSON{
+			Agent:   t.AgentName,
+			Scope:   t.Scope,
+			Project: t.Project,
+			Dir:     t.Dir,
+		}
+		for _, name := range skillNames {
+			srcDir := filepath.Join(t.Dir, name)
+			dstDir := filepath.Join(centralDir, name)
+			status := "synced"
+			if !dirExists(dstDir) {
+				status = "new"
+			} else if hasDiff, _ := skill.HasDifferences(srcDir, dstDir); hasDiff {
+				status = "modified"
+			}
+			entry.Skills = append(entry.Skills, scanSkillJSON{Name: name, Status: status})
+		}
+		out = append(out, entry)
+	}
+
+	data, _ := json.MarshalIndent(out, "", "  ")
+	fmt.Println(string(data))
 	return nil
 }
 
